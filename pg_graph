@@ -1,0 +1,75 @@
+#!/bin/sh
+# Copyright 2018 Łukasz Niemier
+
+# Permission to use, copy, modify, and/or distribute this software for any purpose
+# with or without fee is hereby granted, provided that the above copyright notice
+# and this permission notice appear in all copies.
+
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+# REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+# FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+# INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS
+# OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+# TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
+# THIS SOFTWARE.
+
+psql -1qXt "$@" <<EOF
+\timing off
+
+\echo 'Digraph F{'
+\echo 'ranksep=1.0; rankdir=LR;'
+\echo 'node [shape = none];'
+
+WITH
+    relations AS (
+        SELECT
+            tc.constraint_name AS constraint_name,
+            tc.table_name,
+            kcu.column_name,
+            ccu.table_name AS foreign_table_name,
+            ccu.column_name AS foreign_column_name,
+            ccu.table_name || '_' || ccu.column_name AS key
+        FROM
+            information_schema.table_constraints AS tc
+        JOIN information_schema.key_column_usage AS kcu
+            ON tc.constraint_name = kcu.constraint_name
+            AND tc.table_schema = kcu.table_schema
+        JOIN information_schema.constraint_column_usage AS ccu
+            ON ccu.constraint_name = tc.constraint_name
+            AND ccu.table_schema = tc.table_schema
+        WHERE constraint_type = 'FOREIGN KEY'
+    ),
+    columns AS (
+        SELECT
+            '"' || c.table_name || '" [label = <<table align="left" cellborder="0"><tr><td bgcolor="gray"><B>'
+                || c.table_name || '</B></td></tr>'
+                || string_agg('<tr><td align="left" port="' || COALESCE("into".key, out.key, '') || '">'
+                        || c.column_name || ': <I>' || data_type || '</I></td></tr>',
+                    '')
+                || '</table>>]'
+        FROM
+            (SELECT * FROM information_schema.columns ORDER BY table_name, ordinal_position) c
+        LEFT OUTER JOIN LATERAL (
+            SELECT key || '_out' AS key
+            FROM relations r
+            WHERE (r.table_name = c.table_name AND r.column_name = c.column_name)
+            LIMIT 1
+        ) out ON TRUE
+        LEFT OUTER JOIN LATERAL (
+            SELECT key || '_in' AS key
+            FROM relations r
+            WHERE (r.foreign_table_name = c.table_name AND r.foreign_column_name = c.column_name)
+            LIMIT 1
+        ) "into" ON TRUE
+        WHERE c.table_schema = 'public'
+        GROUP BY c.table_name
+    ),
+    links AS (
+        SELECT
+            table_name || ':' || key || '_out -> ' || foreign_table_name || ':' || key || '_in [label="' || constraint_name || '"];'
+        FROM relations
+    )
+SELECT * FROM columns UNION ALL SELECT * FROM links;
+
+\echo '}'
+EOF
