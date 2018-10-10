@@ -1,0 +1,45 @@
+#!/bin/sh
+# Copyright 2018 Łukasz Niemier
+
+# Permission to use, copy, modify, and/or distribute this software for any purpose
+# with or without fee is hereby granted, provided that the above copyright notice
+# and this permission notice appear in all copies.
+
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+# REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+# FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+# INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS
+# OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+# TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
+# THIS SOFTWARE.
+
+exec psql -1qX "$@" <<EOF
+\timing off
+
+\echo '=========================== UNUSED INDICES ===========================\n'
+SELECT
+    name,
+    usage_over_idx_scan,
+    usage_relative_to_seq_scans,
+    usage_over_all_scans,
+    pg_size_pretty(size)
+FROM (
+    SELECT
+        idx.indexrelname AS name,
+        round(idx.idx_scan * 100.0 / NULLIF(tbl.idx_scan, 0), 2) AS usage_over_idx_scan,
+        round(idx.idx_scan * 100.0 / NULLIF(tbl.seq_scan, 0), 2) AS usage_relative_to_seq_scans,
+        round(idx.idx_scan * 100.0 / NULLIF(tbl.seq_scan + tbl.idx_scan, 0), 2) AS usage_over_all_scans,
+        pg_relation_size(quote_ident(idx.indexrelname)) AS size
+    FROM pg_stat_user_indexes idx
+    INNER JOIN pg_stat_user_tables tbl USING (relid)
+    INNER JOIN pg_index pgidx USING (indexrelid)
+    WHERE pgidx.indisunique
+) stats
+WHERE usage_over_idx_scan < 50
+    AND usage_relative_to_seq_scans < 100
+ORDER BY
+    size DESC,
+    usage_over_idx_scan DESC,
+    usage_relative_to_seq_scans DESC,
+    usage_over_all_scans DESC;
+EOF

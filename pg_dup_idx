@@ -1,0 +1,34 @@
+#!/bin/sh
+# Copyright 2018 Łukasz Niemier
+
+# Permission to use, copy, modify, and/or distribute this software for any purpose
+# with or without fee is hereby granted, provided that the above copyright notice
+# and this permission notice appear in all copies.
+
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+# REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+# FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+# INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS
+# OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+# TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
+# THIS SOFTWARE.
+
+exec psql -1qX "$@" <<EOF
+\timing off
+
+SELECT relname, idx, column_name
+FROM (
+    SELECT indrelid, idx, keys
+    FROM (
+        SELECT x.*, keys, ROW_NUMBER() OVER (PARTITION BY indexrelid) AS idx
+        FROM pg_index x
+        JOIN UNNEST(x.indkey) keys ON TRUE
+    ) q
+    GROUP BY indrelid, indclass, keys, idx
+    HAVING COUNT(*) > 1
+) q
+INNER JOIN pg_class c
+    ON c.oid = indrelid
+INNER JOIN information_schema.columns co
+    ON co.table_name = relname AND co.ordinal_position = keys;
+EOF
